@@ -1,0 +1,1 @@
+"""Pacote principal da API de cadastro de clientes."""
