@@ -1,4 +1,8 @@
 # rotas da API
+from fastapi.security import OAuth2PasswordRequestForm
+
+from .security import criar_token, verificar_senha
+
 from fastapi import Depends, FastAPI, HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -61,4 +65,18 @@ def deletar_cliente(cliente_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Cliente não encontrado")
     crud.deletar(db, cliente)
     
-    
+
+@app.post("/login", response_model=schemas.Token)
+def login(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    """Recebe e-mail e senha e devolve um token JWT."""
+    # O padrão OAuth2 chama o campo de "username"; aqui ele carrega o e-mail.
+    cliente = crud.buscar_por_email(db, form.username)
+    # Mesma mensagem para e-mail inexistente e senha errada, para não revelar
+    # quais e-mails estão cadastrados
+    if not cliente or not verificar_senha(form.password, cliente.senha_hash):
+        raise HTTPException(
+            status_code=401,
+            detail="E-mail ou senha incorretos",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return {"access_token": criar_token(cliente.email), "token_type": "bearer"}

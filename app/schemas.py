@@ -37,3 +37,9 @@ class ClienteOut(BaseModel):
     email: EmailStr
     telefone: str
     criado_em: datetime
+
+class Token(BaseModel):
+    """Resposta do login: o token e o tipo dele (sempre 'bearer')."""
+
+    access_token: str
+    token_type: str
