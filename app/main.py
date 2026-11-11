@@ -1,7 +1,7 @@
 # rotas da API
-from fastapi.security import OAuth2PasswordRequestForm
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 
-from .security import criar_token, verificar_senha
+from .security import criar_token, decodificar_token, verificar_senha
 
 from fastapi import Depends, FastAPI, HTTPException, status
 from sqlalchemy.orm import Session
@@ -15,6 +15,23 @@ models.Base.metadata.create_all(bind=engine)
 #Cria a aplicação. o título aparece na documentação em /docs
 app = FastAPI(title="API de cadastro de clientes")
 
+
+# Aqui diz ao FastAPI onde o token é obtido (rota/login) e onde ele vem na requisição
+# (cabeçalho "Authorization: Bearer <token>"). Isso também cria um botão
+# "Authorize" na tela do /docs.
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
+
+def get_cliente_atual(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+    """Lê o token da requisição e devolve o cliente dono dele. Dá 401 se for inválido."""
+    email = decodificar_token(token)
+    cliente = crud.buscar_por_email(db, email) if email else None
+    if not cliente:
+        raise HTTPException(
+            status_code=401,
+            detail="Token inválido ou expirado",
+            headers={"WWW_Authenticate": "Bearer"},
+        )
+    return cliente
 
 
 # @app.post(...) liga uma URL + método HTTP a uma função.
@@ -31,15 +48,29 @@ def criar_cliente(dados: schemas.ClienteCreate, db: Session = Depends(get_db)):
 
 
 @app.get("/clientes", response_model=list[schemas.ClienteOut])
-def listar_clientes(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
-    """Lista os clientes. Use skip e limit na URL para paginar (?skip=0&limit=10)."""
-    return crud.listar(db, skip, limit)
+def listar_clientes(
+    skip: int = 0, 
+    limit: int = 100, 
+    db: Session = Depends(get_db),
+    atual: models.Cliente = Depends(get_cliente_atual), # exige o login
+    ):
+        """Lista os clientes. Requer token."""
+        return crud.listar(db, skip, limit)
 
+
+@app.get("/clientes/me", response_model=schemas.ClienteOut)
+def meus_dados(atual: models.Cliente = Depends(get_cliente_atual)):
+    """Devolve os dados do cliente logado."""
+    return atual
 
 
 @app.get("/clientes/{cliente_id}", response_model=schemas.ClienteOut)
-def buscar_cliente(cliente_id: int, db: Session = Depends(get_db)):
-    """Busca um cliente pelo id. Retorna 404 se não existir."""
+def buscar_cliente(
+    cliente_id: int, 
+    db: Session = Depends(get_db),
+    atual: models.Cliente = Depends(get_cliente_atual),
+):
+    """Busca um cliente pelo id. Requer o token. Retorna 404 se não existir."""
     cliente = crud.buscar_por_id(db, cliente_id)
     if not cliente:
         raise HTTPException(status_code=404, detail= "Cliente não encontrado")
@@ -48,21 +79,35 @@ def buscar_cliente(cliente_id: int, db: Session = Depends(get_db)):
 
 
 @app.put("/clientes/{cliente_id}", response_model=schemas.ClienteOut)
-def atualizar_cliente(cliente_id: int, dados: schemas.ClienteUpdate, db: Session = Depends(get_db)):
-    """Atualiza nome e/ou telefone de um cliente existente."""
+def atualizar_cliente(
+    cliente_id: int,
+    dados: schemas.ClienteUpdate,
+    db: Session = Depends(get_db),
+    atual: models.Cliente = Depends(get_cliente_atual),
+):
+    """Atualiza nome e/ou telefone. Só o próprio cliente pode alterar seu cadastro."""
     cliente = crud.buscar_por_id(db, cliente_id)
     if not cliente:
         raise HTTPException(status_code=404, detail="Cliente não encontrado")
+    # 401 = "não sei quem você é"; 403 = "sei quem é, mas você não pode fazer isso"
+    if cliente.id != atual.id:
+        raise HTTPException(status_code=403, detail="Você só pode alterar o seu próprio cadastro")
     return crud.atualizar(db, cliente, dados)
 
 
 
 @app.delete("/clientes/{cliente_id}", status_code=status.HTTP_204_NO_CONTENT)
-def deletar_cliente(cliente_id: int, db: Session = Depends(get_db)):
-    """Remove um cliente, Retorna 204 (sucesso, sem conteúdo) ou 404 se não existir."""
+def deletar_cliente(
+    cliente_id: int, 
+    db: Session = Depends(get_db),
+    atual: models.Cliente = Depends(get_cliente_atual),
+):
+    """Remove um cliente. Só próprio cliente pode apagar o seu próprio cadastro."""
     cliente = crud.buscar_por_id(db, cliente_id)
     if not cliente:
         raise HTTPException(status_code=404, detail="Cliente não encontrado")
+    if cliente.id != atual.id:
+        raise HTTPException(status_code=403, detail="Você só pode apagar o seu próprio cadastro")
     crud.deletar(db, cliente)
     
 
